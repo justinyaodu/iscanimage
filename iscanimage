@@ -1,0 +1,263 @@
+#!/bin/bash
+
+name='iscanimage'
+version='1.0.0'
+
+version_msg="${name} ${version}
+Copyright (C) 2021 Justin Yao Du.
+Licensed under the MIT License.
+https://github.com/justinyaodu/${name}"
+
+selected_device=''
+output_dir=''
+output_format='png'
+run_before=''
+run_after=''
+colorize=''
+verbose=0
+scanimage_options=()
+
+help_msg="Usage: ${name} [OPTIONS...] [-- SCANIMAGE_OPTIONS...]
+User-friendly interactive wrapper script for scanimage.
+
+Options:
+  -L, --list-devices        list all devices and exit
+  -O, --output-dir DIR      put scanned files in this directory (if unspecified,
+                              use a temporary directory)
+  -f, --format FORMAT       use FORMAT as the output file format and file
+                              extension (default: ${output_format})
+  -d, --device-name DEVICE  scan from DEVICE (if unspecified, ask the user)
+  -B, --before CMD          evaluate CMD before scanning each file
+  -A, --after CMD           evaluate CMD after successfully scanning each file
+      --color               always colorize output
+      --no-color            never colorize output
+  -v, --verbose             show more verbose output
+  -h, --help                show this help message
+      --version             show version information
+
+The evaluated commands for --before and --after can use \$filename to refer to
+the current filename. For example:
+
+  scanimage --after 'cp \"\$filename\" ~'
+
+Ensure that the parameter expansion is properly quoted or escaped, to avoid
+premature expansion by your shell."
+
+devices=()
+
+load_devices() {
+	local line
+	while read -r line; do
+		echo "${#devices[@]}"
+
+		devices+=("${line}")
+		printf "\tName:\t%s\n" "${line}"
+
+		read -r line
+		printf "\tVendor:\t%s\n" "${line}"
+
+		read -r line
+		printf "\tModel:\t%s\n" "${line}"
+
+		read -r line
+		printf "\tType:\t%s\n" "${line}"
+	done < <(scanimage --formatted-device-list $'%d\n%v\n%m\n%t\n')
+}
+
+select_device() {
+	echoy "Detecting scanners..."
+	load_devices
+
+	echoy "Select a scanner device by index (0-$(( ${#devices[@]} - 1 ))) or name."
+	while :; do
+		if ! read -r -p "Device: " selected_device; then
+			echor "No device selected."
+			exit 1
+		fi
+
+		if [[ "${selected_device}" =~ ^[0-9]+$ ]]; then
+			if (( selected_device < ${#devices[@]} )); then
+				selected_device="${devices[selected_device]}"
+				return 0
+			else
+				echor "Index out of range."
+			fi
+		else
+			local device
+			for device in "${devices[@]}"; do
+				[ "${selected_device}" = "${device}" ] && return 0
+			done
+			echor "Invalid device name."
+		fi
+	done
+}
+
+scan_loop() {
+	[ "${output_dir}" ] || output_dir="$(mktemp -d)"
+	echo "Using output directory: '${output_dir}'"
+
+	echoy "Enter each output filename without the extension (e.g. my_image),"
+	echoy "or leave the filename blank to use the current date and time."
+
+	local num_scanned=0
+	while :; do
+		local filename_stem
+		if ! read -r -p "Enter filename (Ctrl+D to exit): " filename_stem; then
+			echo
+			echo "Scanning canceled."
+			break
+		fi
+
+		[ "${filename_stem}" ] || filename_stem="$(date '+%Y-%m-%d-%H-%M-%S')"
+		filename="${output_dir}/${filename_stem}.${output_format}"
+
+		if [ "${run_before}" ]; then
+			(( verbose )) && echoy "Run before: '${run_before}'"
+			eval "${run_before}"
+		fi
+
+		local scan_cmd=(scanimage \
+			--device-name "${selected_device}" \
+			--format "${output_format}" \
+			--output-file "${filename}" \
+			"${scanimage_options[@]}")
+		(( verbose )) && echoy "Scan command:$(printf ' %q' "${scan_cmd[@]}")"
+
+		echoy "Scanning..."
+		if "${scan_cmd[@]}"; then
+			(( num_scanned++ ))
+			echog "Scanned file: '${filename}'"
+
+			if [ "${run_after}" ]; then
+				(( verbose )) && echoy "Run after: '${run_after}'"
+				eval "${run_after}"
+			fi
+		else
+			echor "Failed to scan file: '${filename}'"
+		fi
+	done
+
+	if (( num_scanned > 0 )); then
+		echog "Scanned ${num_scanned} file(s) to output directory: '${output_dir}'"
+	fi
+}
+
+color_init() {
+	if [ ! "${colorize}" ]; then
+		[ -t 1 ] && colorize=1 || colorize=0
+	fi
+
+	if (( colorize )); then
+		c0="$(tput sgr0)"
+		cr="$(tput setaf 1)"
+		cg="$(tput setaf 2)"
+		cy="$(tput setaf 3)"
+	else
+		c0=''
+		cr=''
+		cg=''
+		cy=''
+	fi
+}
+
+echor() {
+	echo "${cr}${1}${c0}"
+}
+
+echog() {
+	echo "${cg}${1}${c0}"
+}
+
+echoy() {
+	echo "${cy}${1}${c0}"
+}
+
+parse_options() {
+	while (( ${#} )); do
+		case "${1}" in
+			-O|--output-dir|\
+			-f|--format|\
+			-d|--device|--device-name|\
+			-B|--before|\
+			-A|--after)
+				if (( ${#} < 2 )); then
+					die_usage "Option '${1}' requires an argument."
+				fi
+				parse_option_arg "${1}" "${2}"
+				shift
+				;;
+			-l|-L|--list-devices)
+				load_devices
+				exit 0
+				;;
+			--color)
+				colorize=1
+				;;
+			--no-color)
+				colorize=0
+				;;
+			-v|--verbose)
+				verbose=1
+				;;
+			--)
+				shift
+				scanimage_options=("${@}")
+				return
+				;;
+			-h|--help)
+				echo "${help_msg}"
+				exit 0
+				;;
+			--version)
+				echo "${version_msg}"
+				exit 0
+				;;
+			-*)
+				die_usage "Unrecognized option '${1}'."
+				;;
+			*)
+				die_usage "Unexpected argument '${1}'."
+				;;
+		esac
+		shift
+	done
+}
+
+parse_option_arg() {
+	case "${1}" in
+		-O|--output-dir)
+			if [ ! -d "${2}" ]; then
+				echo "Output directory does not exist: '${2}'"
+				exit 1
+			fi
+			output_dir="${2}"
+			;;
+		-f|--format)
+			output_format="${2}"
+			;;
+		-d|--device|--device-name)
+			selected_device="${2}"
+			;;
+		-B|--before)
+			run_before="${2}"
+			;;
+		-A|--after)
+			run_after="${2}"
+			;;
+	esac
+}
+
+die_usage() {
+	echo "${1}"
+	echo "Try '${name} --help' for more information."
+	exit 2
+}
+
+main() {
+	parse_options "${@}"
+	color_init
+	[ "${selected_device}" ] || select_device
+	scan_loop
+}
+
+main "${@}"

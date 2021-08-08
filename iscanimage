@@ -1,16 +1,17 @@
 #!/bin/bash
 
 name='iscanimage'
-version='1.0.0'
+version='1.1.0'
 
 version_msg="${name} ${version}
 Copyright (C) 2021 Justin Yao Du.
 Licensed under the MIT License.
 https://github.com/justinyaodu/${name}"
 
-selected_device=''
 output_dir=''
 output_format='png'
+selected_device=''
+refresh_devices=0
 run_before=''
 run_after=''
 colorize=''
@@ -27,10 +28,12 @@ Options:
   -f, --format FORMAT       use FORMAT as the output file format and file
                               extension (default: ${output_format})
   -d, --device-name DEVICE  scan from DEVICE (if unspecified, ask the user)
+  -r, --refresh-devices     refresh all devices before scanning each file, which
+                              might fix errors like 'open of device ... failed'
   -B, --before CMD          evaluate CMD before scanning each file
   -A, --after CMD           evaluate CMD after successfully scanning each file
-      --color               always colorize output
-      --no-color            never colorize output
+      --color               always colorize command line output
+      --no-color            never colorize command line output
   -v, --verbose             show more verbose output
   -h, --help                show this help message
       --version             show version information
@@ -116,6 +119,11 @@ scan_loop() {
 			eval "${run_before}"
 		fi
 
+		if (( refresh_devices )); then
+			echoy "Refreshing devices..."
+			scanimage --list-devices > /dev/null
+		fi
+
 		local scan_cmd=(scanimage \
 			--device-name "${selected_device}" \
 			--format "${output_format}" \
@@ -189,6 +197,9 @@ parse_options() {
 			-l|-L|--list-devices)
 				load_devices
 				exit 0
+				;;
+			-r|--refresh-devices)
+				refresh_devices=1
 				;;
 			--color)
 				colorize=1

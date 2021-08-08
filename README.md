@@ -17,7 +17,7 @@
 
 ## Installation
 
-Download the [iscanimage](iscanimage) script, make it executable, and drop it somewhere on your `$PATH`.
+Download the [iscanimage](iscanimage) script, make it executable, and drop it somewhere on your `$PATH`. If you are using Arch Linux, you can also install [`iscanimage`](https://aur.archlinux.org/packages/iscanimage/) from the AUR.
 
 ## Usage
 
